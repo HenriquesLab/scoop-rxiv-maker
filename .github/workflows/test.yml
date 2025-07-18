@@ -15,7 +15,7 @@ jobs:
     
     strategy:
       matrix:
-        os: [windows-2019, windows-2022]
+        os: [windows-2022, windows-latest]
     
     steps:
       - name: Checkout repository
