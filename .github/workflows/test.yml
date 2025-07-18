@@ -29,12 +29,18 @@ jobs:
         
       - name: Add bucket and install rxiv-maker
         run: |
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
           scoop bucket add local ${{ github.workspace }}
           scoop install rxiv-maker
         shell: powershell
         
       - name: Verify installation
         run: |
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
           # Check if rxiv command is available
           rxiv --version
           rxiv --help
@@ -46,6 +52,9 @@ jobs:
       - name: Test with LaTeX (optional)
         continue-on-error: true
         run: |
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
           # Install LaTeX for full testing
           scoop bucket add extras
           scoop install latex
