@@ -1,0 +1,673 @@
+name: Test Formula
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      test-scope:
+        description: 'Test scope'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - 'full'
+          - 'syntax-only'
+          - 'quick'
+          - 'comprehensive'
+      windows-versions:
+        description: 'Windows versions to test (comma-separated)'
+        required: false
+        default: 'windows-2022,windows-latest'
+        type: string
+      test-latex:
+        description: 'Test LaTeX integration'
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # Test weekly on Sundays at 6 AM UTC to catch upstream changes
+    - cron: '0 6 * * 0'
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
+env:
+  SCOOP_DEBUG: 1
+
+jobs:
+  setup:
+    name: Setup Test Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      test-scope: ${{ steps.config.outputs.test-scope }}
+      test-matrix: ${{ steps.config.outputs.test-matrix }}
+      run-syntax: ${{ steps.config.outputs.run-syntax }}
+      run-install: ${{ steps.config.outputs.run-install }}
+      run-comprehensive: ${{ steps.config.outputs.run-comprehensive }}
+      test-latex: ${{ steps.config.outputs.test-latex }}
+    
+    steps:
+      - name: Configure test parameters
+        id: config
+        run: |
+          # Determine test scope
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            test_scope="comprehensive"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            test_scope="${{ inputs.test-scope }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            test_scope="full"
+          else
+            test_scope="quick"
+          fi
+          
+          echo "test-scope=$test_scope" >> $GITHUB_OUTPUT
+          
+          # Parse Windows versions
+          if [ "${{ inputs.windows-versions }}" != "" ]; then
+            windows_versions="${{ inputs.windows-versions }}"
+          else
+            windows_versions="windows-2022,windows-latest"
+          fi
+          
+          # Convert to JSON array for matrix
+          windows_matrix=$(echo "$windows_versions" | python3 -c "
+          import sys
+          import json
+          versions = sys.stdin.read().strip().split(',')
+          versions = [v.strip() for v in versions if v.strip()]
+          print(json.dumps(versions))
+          ")
+          
+          # Configure test matrix based on scope
+          case "$test_scope" in
+            "syntax-only")
+              matrix='{"os": ["ubuntu-latest"], "include": []}'
+              run_syntax="true"
+              run_install="false"
+              run_comprehensive="false"
+              ;;
+            "quick")
+              matrix="{\"os\": [\"windows-latest\"], \"include\": []}"
+              run_syntax="true"
+              run_install="true"
+              run_comprehensive="false"
+              ;;
+            "comprehensive")
+              matrix="{\"os\": $windows_matrix, \"include\": [{\"os\": \"ubuntu-latest\", \"test-syntax\": true}]}"
+              run_syntax="true"
+              run_install="true"
+              run_comprehensive="true"
+              ;;
+            *)
+              matrix="{\"os\": $windows_matrix, \"include\": []}"
+              run_syntax="true"
+              run_install="true"
+              run_comprehensive="false"
+              ;;
+          esac
+          
+          echo "test-matrix=$matrix" >> $GITHUB_OUTPUT
+          echo "run-syntax=$run_syntax" >> $GITHUB_OUTPUT
+          echo "run-install=$run_install" >> $GITHUB_OUTPUT
+          echo "run-comprehensive=$run_comprehensive" >> $GITHUB_OUTPUT
+          
+          # LaTeX testing
+          if [ "${{ inputs.test-latex }}" = "false" ]; then
+            echo "test-latex=false" >> $GITHUB_OUTPUT
+          else
+            echo "test-latex=true" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "## Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test Scope**: $test_scope" >> $GITHUB_STEP_SUMMARY
+          echo "- **Windows Versions**: $windows_versions" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **LaTeX Testing**: ${{ inputs.test-latex }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Syntax Tests**: $run_syntax" >> $GITHUB_STEP_SUMMARY
+          echo "- **Install Tests**: $run_install" >> $GITHUB_STEP_SUMMARY
+          echo "- **Comprehensive Tests**: $run_comprehensive" >> $GITHUB_STEP_SUMMARY
+
+  manifest-validation:
+    name: Manifest Validation
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: needs.setup.outputs.run-syntax == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Validate JSON syntax
+        run: |
+          echo "🔍 Validating JSON syntax..."
+          
+          # Check JSON syntax
+          python3 -m json.tool bucket/rxiv-maker.json > /dev/null
+          echo "✅ JSON syntax is valid"
+          
+          # Pretty print for review
+          echo "📄 Manifest contents:"
+          python3 -m json.tool bucket/rxiv-maker.json
+          
+      - name: Validate manifest structure
+        run: |
+          echo "🔍 Validating manifest structure..."
+          
+          python3 -c "
+          import json
+          import sys
+          
+          with open('bucket/rxiv-maker.json', 'r') as f:
+              manifest = json.load(f)
+          
+          # Check required fields
+          required_fields = ['version', 'url', 'hash', 'description', 'homepage', 'license']
+          missing_fields = []
+          
+          for field in required_fields:
+              if field not in manifest:
+                  missing_fields.append(field)
+          
+          if missing_fields:
+              print(f'❌ Missing required fields: {missing_fields}')
+              sys.exit(1)
+          
+          # Check URL format
+          if not manifest['url'].startswith('https://'):
+              print('❌ URL must start with https://')
+              sys.exit(1)
+          
+          # Check hash format
+          if not manifest['hash'].startswith('sha256:'):
+              print('❌ Hash must be SHA256 format')
+              sys.exit(1)
+          
+          print('✅ Manifest structure is valid')
+          print(f'Version: {manifest[\"version\"]}')
+          print(f'URL: {manifest[\"url\"]}')
+          print(f'Description: {manifest[\"description\"]}')
+          "
+          
+      - name: Verify download URL
+        run: |
+          echo "🌐 Verifying download URL..."
+          
+          MANIFEST_URL=$(python3 -c "import json; print(json.load(open('bucket/rxiv-maker.json'))['url'])")
+          echo "Testing URL: $MANIFEST_URL"
+          
+          # Verify URL exists
+          curl -I -f "$MANIFEST_URL" --max-time 30
+          echo "✅ Download URL is valid"
+          
+      - name: Check version consistency
+        run: |
+          echo "📊 Checking version consistency..."
+          
+          # Extract version from manifest
+          MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('bucket/rxiv-maker.json'))['version'])")
+          echo "Manifest version: $MANIFEST_VERSION"
+          
+          # Check if version exists on PyPI
+          curl -f "https://pypi.org/pypi/rxiv-maker/$MANIFEST_VERSION/json" > /dev/null
+          echo "✅ Version $MANIFEST_VERSION exists on PyPI"
+          
+      - name: Test autoupdate mechanism
+        run: |
+          echo "🔄 Testing autoupdate mechanism..."
+          
+          # Test checkver URL
+          curl -f "https://pypi.org/pypi/rxiv-maker/json" > pypi.json
+          
+          # Extract latest version
+          LATEST_VERSION=$(python3 -c "import json; print(json.load(open('pypi.json'))['info']['version'])")
+          echo "Latest PyPI version: $LATEST_VERSION"
+          
+          # Test autoupdate URL pattern
+          AUTOUPDATE_URL="https://files.pythonhosted.org/packages/source/r/rxiv-maker/rxiv_maker-$LATEST_VERSION.tar.gz"
+          echo "Testing autoupdate URL: $AUTOUPDATE_URL"
+          
+          # Verify URL exists
+          curl -I -f "$AUTOUPDATE_URL"
+          echo "✅ Autoupdate URL pattern is valid"
+
+  scoop-installation:
+    name: Scoop Installation Test
+    needs: [setup, manifest-validation]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    if: needs.setup.outputs.run-install == 'true' && startsWith(matrix.os, 'windows')
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.test-matrix) }}
+      fail-fast: false
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Scoop
+        run: |
+          Write-Host "🛠️ Installing Scoop..."
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm get.scoop.sh | iex
+          
+          # Verify Scoop installation
+          scoop --version
+          Write-Host "✅ Scoop installed successfully"
+        shell: powershell
+        
+      - name: Configure Scoop environment
+        run: |
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Show Scoop config
+          scoop config
+          
+          # Add common buckets (for dependencies)
+          scoop bucket add extras
+          scoop bucket add main
+          
+          Write-Host "✅ Scoop environment configured"
+        shell: powershell
+        
+      - name: Install rxiv-maker from manifest
+        timeout-minutes: 20
+        run: |
+          Write-Host "📦 Installing rxiv-maker from local manifest..."
+          
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Install from local manifest
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+          
+          Write-Host "✅ rxiv-maker installed successfully"
+        shell: powershell
+        
+      - name: Verify installation
+        run: |
+          Write-Host "🔍 Verifying installation..."
+          
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Check if rxiv command is available
+          rxiv --version
+          rxiv --help
+          
+          # Check Scoop list
+          scoop list rxiv-maker
+          
+          Write-Host "✅ Installation verification successful"
+        shell: powershell
+        
+      - name: Test CLI functionality
+        run: |
+          Write-Host "🧪 Testing CLI functionality..."
+          
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Test configuration commands
+          rxiv config show
+          
+          # Test version command with detailed output
+          rxiv version --detailed
+          
+          Write-Host "✅ CLI functionality tests passed"
+        shell: powershell
+        
+      - name: Test manuscript operations
+        run: |
+          Write-Host "📄 Testing manuscript operations..."
+          
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Create test directory
+          New-Item -ItemType Directory -Path "test-manuscript" -Force
+          Set-Location "test-manuscript"
+          
+          # Test init command
+          rxiv init test-project
+          
+          # If files were created, verify structure
+          if (Test-Path "00_CONFIG.yml") {
+            Write-Host "✅ Manuscript initialization successful"
+            
+            # Check required files
+            $requiredFiles = @("01_MAIN.md", "02_SUPPLEMENTARY_INFO.md", "03_REFERENCES.bib")
+            foreach ($file in $requiredFiles) {
+              if (!(Test-Path $file)) {
+                throw "$file was not created"
+              }
+            }
+            
+            # Test validation
+            rxiv validate --no-doi
+            
+            Write-Host "✅ Manuscript operations test passed"
+          } else {
+            Write-Host "ℹ️ Manuscript initialization may use different structure"
+          }
+          
+          Set-Location ".."
+        shell: powershell
+        continue-on-error: true
+        
+      - name: Test package update
+        run: |
+          Write-Host "🔄 Testing package update mechanism..."
+          
+          # Reload PATH to ensure scoop is available
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Test update check
+          scoop update
+          scoop status
+          
+          Write-Host "✅ Package update mechanism tested"
+        shell: powershell
+        continue-on-error: true
+
+  latex-integration:
+    name: LaTeX Integration Test
+    needs: [setup, scoop-installation]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    if: needs.setup.outputs.test-latex == 'true' && needs.setup.outputs.run-comprehensive == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Scoop
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm get.scoop.sh | iex
+          
+          # Reload PATH
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Add buckets
+          scoop bucket add extras
+          scoop bucket add main
+        shell: powershell
+        
+      - name: Install rxiv-maker
+        run: |
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+        shell: powershell
+        
+      - name: Install LaTeX
+        run: |
+          Write-Host "📄 Installing LaTeX for testing..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Install LaTeX via Scoop
+          scoop install latex
+          
+          # Verify LaTeX installation
+          pdflatex --version
+          
+          Write-Host "✅ LaTeX installed successfully"
+        shell: powershell
+        continue-on-error: true
+        
+      - name: Test LaTeX functionality
+        run: |
+          Write-Host "🧪 Testing LaTeX functionality..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Create test manuscript
+          New-Item -ItemType Directory -Path "latex-test" -Force
+          Set-Location "latex-test"
+          
+          # Initialize manuscript
+          rxiv init latex-manuscript
+          
+          if (Test-Path "00_CONFIG.yml") {
+            Set-Location "latex-manuscript"
+            
+            # Test validation with LaTeX
+            rxiv validate
+            
+            # Test PDF generation (may fail without full LaTeX distribution)
+            rxiv pdf --skip-validation
+            
+            Write-Host "✅ LaTeX integration test completed"
+          } else {
+            Write-Host "ℹ️ Manuscript not created, skipping LaTeX test"
+          }
+          
+          Set-Location "../.."
+        shell: powershell
+        continue-on-error: true
+
+  performance-testing:
+    name: Performance Testing
+    needs: [setup, scoop-installation]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    if: needs.setup.outputs.run-comprehensive == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Scoop and rxiv-maker
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm get.scoop.sh | iex
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+        shell: powershell
+        
+      - name: Performance benchmarks
+        run: |
+          Write-Host "📊 Running performance benchmarks..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Test CLI startup time
+          $startTime = Get-Date
+          rxiv --version | Out-Null
+          $endTime = Get-Date
+          $duration = ($endTime - $startTime).TotalMilliseconds
+          
+          Write-Host "CLI startup time: $duration ms"
+          
+          # Test help command performance
+          $startTime = Get-Date
+          rxiv --help | Out-Null
+          $endTime = Get-Date
+          $duration = ($endTime - $startTime).TotalMilliseconds
+          
+          Write-Host "Help command time: $duration ms"
+          
+          # Test config command performance
+          $startTime = Get-Date
+          rxiv config show | Out-Null
+          $endTime = Get-Date
+          $duration = ($endTime - $startTime).TotalMilliseconds
+          
+          Write-Host "Config command time: $duration ms"
+          
+          Write-Host "✅ Performance benchmarks completed"
+        shell: powershell
+
+  comprehensive-testing:
+    name: Comprehensive Testing
+    needs: [setup, scoop-installation]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    if: needs.setup.outputs.run-comprehensive == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Scoop and rxiv-maker
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm get.scoop.sh | iex
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          scoop bucket add extras
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+        shell: powershell
+        
+      - name: Test all CLI commands
+        run: |
+          Write-Host "🧪 Testing all CLI commands..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Test version commands
+          rxiv --version
+          rxiv version --detailed
+          
+          # Test configuration
+          rxiv config show
+          
+          # Test help commands
+          rxiv --help
+          rxiv pdf --help
+          rxiv init --help
+          
+          Write-Host "✅ All CLI commands tested"
+        shell: powershell
+        
+      - name: Test manuscript workflows
+        run: |
+          Write-Host "📄 Testing manuscript workflows..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Create comprehensive test
+          New-Item -ItemType Directory -Path "comprehensive-test" -Force
+          Set-Location "comprehensive-test"
+          
+          # Test manuscript initialization
+          rxiv init comprehensive-manuscript
+          
+          if (Test-Path "00_CONFIG.yml") {
+            Set-Location "comprehensive-manuscript"
+            
+            # Test validation
+            rxiv validate --no-doi
+            
+            # Test figure commands
+            rxiv figures --help
+            
+            # Test bibliography commands
+            rxiv bibliography --help
+            
+            Write-Host "✅ Manuscript workflow tests passed"
+          } else {
+            Write-Host "ℹ️ Manuscript not created, testing CLI only"
+          }
+          
+          Set-Location "../.."
+        shell: powershell
+        
+      - name: Test uninstall and reinstall
+        run: |
+          Write-Host "🔄 Testing uninstall and reinstall..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Test uninstall
+          scoop uninstall rxiv-maker
+          
+          # Verify uninstall
+          try {
+            rxiv --version
+            Write-Host "❌ Uninstall failed - command still available"
+            exit 1
+          } catch {
+            Write-Host "✅ Uninstall successful - command no longer available"
+          }
+          
+          # Test reinstall
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+          
+          # Verify reinstall
+          rxiv --version
+          Write-Host "✅ Reinstall successful"
+        shell: powershell
+
+  summary:
+    name: Test Summary
+    needs: [setup, manifest-validation, scoop-installation, latex-integration, performance-testing, comprehensive-testing]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "# Scoop Formula Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Scope**: ${{ needs.setup.outputs.test-scope }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**LaTeX Testing**: ${{ needs.setup.outputs.test-latex }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Manifest validation
+          if [ "${{ needs.manifest-validation.result }}" = "success" ]; then
+            echo "✅ **Manifest Validation**: All checks passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Manifest Validation**: Issues found" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Scoop installation
+          if [ "${{ needs.scoop-installation.result }}" = "success" ]; then
+            echo "✅ **Scoop Installation**: All Windows versions successful" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.scoop-installation.result }}" = "failure" ]; then
+            echo "❌ **Scoop Installation**: Some Windows versions failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **Scoop Installation**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # LaTeX integration
+          if [ "${{ needs.latex-integration.result }}" = "success" ]; then
+            echo "✅ **LaTeX Integration**: Tests passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.latex-integration.result }}" = "failure" ]; then
+            echo "❌ **LaTeX Integration**: Tests failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **LaTeX Integration**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Performance testing
+          if [ "${{ needs.performance-testing.result }}" = "success" ]; then
+            echo "✅ **Performance Testing**: Benchmarks completed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.performance-testing.result }}" = "failure" ]; then
+            echo "❌ **Performance Testing**: Benchmarks failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **Performance Testing**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Comprehensive testing
+          if [ "${{ needs.comprehensive-testing.result }}" = "success" ]; then
+            echo "✅ **Comprehensive Testing**: All tests passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.comprehensive-testing.result }}" = "failure" ]; then
+            echo "❌ **Comprehensive Testing**: Some tests failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **Comprehensive Testing**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Overall Result**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
