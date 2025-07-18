@@ -313,7 +313,7 @@ jobs:
           $data = $response.Content | ConvertFrom-Json
           $sha256 = ""
           
-          foreach ($file in $data.releases.$TARGET_VERSION) {
+          foreach ($file in $data.releases.($TARGET_VERSION)) {
               if ($file.packagetype -eq "sdist") {
                   $sha256 = $file.digests.sha256
                   break
