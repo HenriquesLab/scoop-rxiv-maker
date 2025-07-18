@@ -3,8 +3,8 @@
     "description": "Automated LaTeX article generation with modern CLI and figure creation capabilities",
     "homepage": "https://github.com/henriqueslab/rxiv-maker",
     "license": "MIT",
-    "url": "https://files.pythonhosted.org/packages/source/r/rxiv-maker/rxiv_maker-1.4.0.tar.gz",
-    "hash": "sha256:9a8c5f65e7f4e5f5f7e4a4f3f7e3b1a7f3e7a3f3e7a3f3e7a3f3e7a3f3e7a3f",
+    "url": "https://files.pythonhosted.org/packages/8e/e0/87fe31c8e57b8638077a945fb31dd3878201058b04f35a569ec5f2969e23/rxiv_maker-1.4.0.tar.gz",
+    "hash": "sha256:15d9e9fbc1ad0ca42b6c64d487088fdaa0f365c3884781b918bf56af8787a2ed",
     "depends": [
         "python"
     ],
