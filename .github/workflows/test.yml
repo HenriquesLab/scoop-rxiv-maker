@@ -1,0 +1,108 @@
+name: Test Scoop Installation
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Test weekly to catch PyPI updates
+    - cron: '0 6 * * 1'
+
+jobs:
+  test-scoop-installation:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        windows-version: [windows-2019, windows-2022]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Scoop
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm get.scoop.sh | iex
+        shell: powershell
+        
+      - name: Add bucket and install rxiv-maker
+        run: |
+          scoop bucket add local ${{ github.workspace }}
+          scoop install rxiv-maker
+        shell: powershell
+        
+      - name: Verify installation
+        run: |
+          # Check if rxiv command is available
+          rxiv --version
+          rxiv --help
+          
+          # Test basic functionality
+          python -c "import rxiv_maker; print('Import successful')"
+        shell: powershell
+        
+      - name: Test with LaTeX (optional)
+        continue-on-error: true
+        run: |
+          # Install LaTeX for full testing
+          scoop bucket add extras
+          scoop install latex
+          
+          # Initialize test manuscript
+          mkdir test-manuscript
+          cd test-manuscript
+          rxiv init
+          
+          # Verify manuscript structure
+          if (!(Test-Path "00_CONFIG.yml")) { throw "CONFIG file not created" }
+          if (!(Test-Path "01_MAIN.md")) { throw "MAIN file not created" }
+        shell: powershell
+
+  test-manifest-syntax:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Validate JSON syntax
+        run: |
+          # Check JSON syntax
+          python -m json.tool bucket/rxiv-maker.json > /dev/null
+          echo "JSON syntax is valid"
+          
+      - name: Check version consistency
+        run: |
+          # Extract version from manifest
+          MANIFEST_VERSION=$(python -c "import json; print(json.load(open('bucket/rxiv-maker.json'))['version'])")
+          echo "Manifest version: $MANIFEST_VERSION"
+          
+          # Check if version exists on PyPI
+          curl -f "https://pypi.org/pypi/rxiv-maker/$MANIFEST_VERSION/json" > /dev/null
+          echo "Version $MANIFEST_VERSION exists on PyPI"
+
+  test-autoupdate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Test autoupdate mechanism
+        run: |
+          # Test checkver URL
+          curl -f "https://pypi.org/pypi/rxiv-maker/json" > pypi.json
+          
+          # Extract latest version using jq
+          LATEST_VERSION=$(jq -r '.info.version' pypi.json)
+          echo "Latest PyPI version: $LATEST_VERSION"
+          
+          # Test autoupdate URL pattern
+          AUTOUPDATE_URL="https://files.pythonhosted.org/packages/source/r/rxiv-maker/rxiv_maker-$LATEST_VERSION.tar.gz"
+          echo "Testing autoupdate URL: $AUTOUPDATE_URL"
+          
+          # Verify URL exists
+          curl -I -f "$AUTOUPDATE_URL"
+          echo "Autoupdate URL is valid"
