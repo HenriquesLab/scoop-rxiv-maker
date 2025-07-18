@@ -32,8 +32,8 @@ jobs:
           # Reload PATH to ensure scoop is available
           $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
           
-          scoop bucket add local ${{ github.workspace }}
-          scoop install rxiv-maker
+          # Test manifest locally first
+          scoop install ${{ github.workspace }}/bucket/rxiv-maker.json
         shell: powershell
         
       - name: Verify installation
