@@ -242,16 +242,25 @@ jobs:
     needs: [setup, manifest-validation]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    if: needs.setup.outputs.run-install == 'true' && startsWith(matrix.os, 'windows')
+    if: needs.setup.outputs.run-install == 'true'
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.test-matrix) }}
       fail-fast: false
     
     steps:
+      - name: Skip non-Windows
+        if: "!startsWith(matrix.os, 'windows')"
+        run: |
+          echo "Skipping installation test on non-Windows platform"
+          exit 0
+        shell: bash
+        
       - name: Checkout repository
+        if: startsWith(matrix.os, 'windows')
         uses: actions/checkout@v4
         
       - name: Install Scoop
+        if: startsWith(matrix.os, 'windows')
         run: |
           Write-Host "🛠️ Installing Scoop..."
           Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
@@ -263,6 +272,7 @@ jobs:
         shell: powershell
         
       - name: Configure Scoop environment
+        if: startsWith(matrix.os, 'windows')
         run: |
           # Reload PATH to ensure scoop is available
           $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
@@ -278,6 +288,7 @@ jobs:
         shell: powershell
         
       - name: Install rxiv-maker from manifest
+        if: startsWith(matrix.os, 'windows')
         timeout-minutes: 20
         run: |
           Write-Host "📦 Installing rxiv-maker from local manifest..."
@@ -292,6 +303,7 @@ jobs:
         shell: powershell
         
       - name: Verify installation
+        if: startsWith(matrix.os, 'windows')
         run: |
           Write-Host "🔍 Verifying installation..."
           
@@ -309,6 +321,7 @@ jobs:
         shell: powershell
         
       - name: Test CLI functionality
+        if: startsWith(matrix.os, 'windows')
         run: |
           Write-Host "🧪 Testing CLI functionality..."
           
@@ -325,6 +338,7 @@ jobs:
         shell: powershell
         
       - name: Test manuscript operations
+        if: startsWith(matrix.os, 'windows')
         run: |
           Write-Host "📄 Testing manuscript operations..."
           
@@ -390,6 +404,7 @@ jobs:
         shell: powershell
         
       - name: Test package update
+        if: startsWith(matrix.os, 'windows')
         run: |
           Write-Host "🔄 Testing package update mechanism..."
           
