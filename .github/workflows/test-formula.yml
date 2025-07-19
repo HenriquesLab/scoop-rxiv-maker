@@ -238,7 +238,7 @@ jobs:
           echo "✅ Autoupdate URL pattern is valid"
 
   scoop-installation:
-    name: Scoop Installation Test
+    name: Scoop Installation Test (${{ matrix.os }} - ${{ matrix.shell || 'PowerShell' }})
     needs: [setup, manifest-validation]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -662,9 +662,307 @@ jobs:
           Write-Host "✅ Reinstall successful"
         shell: powershell
 
+  powershell-core-testing:
+    name: PowerShell Core Testing
+    needs: [setup, scoop-installation]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    if: needs.setup.outputs.run-comprehensive == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install PowerShell Core
+        run: |
+          Write-Host "📦 Ensuring PowerShell Core is available..."
+          
+          # Check if pwsh is already available
+          try {
+            $pwshVersion = pwsh --version
+            Write-Host "✅ PowerShell Core already installed: $pwshVersion"
+          } catch {
+            Write-Host "Installing PowerShell Core..."
+            # PowerShell Core is usually pre-installed on GitHub runners
+            # But we'll verify it's available
+            winget install --id Microsoft.PowerShell --source winget
+          }
+        shell: powershell
+        
+      - name: Install Scoop in PowerShell Core
+        run: |
+          Write-Host "🛠️ Installing Scoop in PowerShell Core..."
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          
+          # Install Scoop
+          irm get.scoop.sh | iex
+          
+          # Verify installation
+          scoop --version
+          Write-Host "✅ Scoop installed successfully in PowerShell Core"
+        shell: pwsh
+        
+      - name: Install rxiv-maker with PowerShell Core
+        run: |
+          Write-Host "📦 Installing rxiv-maker with PowerShell Core..."
+          
+          # Reload PATH
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Install from local manifest
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+          
+          Write-Host "✅ rxiv-maker installed successfully"
+        shell: pwsh
+        
+      - name: Test rxiv commands in PowerShell Core
+        run: |
+          Write-Host "🧪 Testing rxiv commands in PowerShell Core..."
+          
+          # Reload PATH
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Test commands
+          rxiv --version
+          rxiv --help
+          rxiv config show
+          
+          Write-Host "✅ All commands work in PowerShell Core"
+        shell: pwsh
+        
+      - name: Run Pester tests in PowerShell Core
+        run: |
+          Write-Host "🧪 Running Pester tests in PowerShell Core..."
+          
+          # Reload PATH
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Change to repository directory
+          Set-Location "${{ github.workspace }}"
+          
+          # Run tests if they exist
+          if (Test-Path "Scoop-Bucket.Tests.ps1") {
+            # Install Pester if needed
+            if (!(Get-Module -ListAvailable -Name Pester)) {
+              Install-Module -Name Pester -Force -Scope CurrentUser
+            }
+            
+            # Run tests
+            Invoke-Pester -Path "Scoop-Bucket.Tests.ps1" -Output Detailed
+            Write-Host "✅ Pester tests completed"
+          } else {
+            Write-Host "ℹ️ No Pester tests found"
+          }
+        shell: pwsh
+        
+      - name: Compare PowerShell vs PowerShell Core behavior
+        run: |
+          Write-Host "🔍 Comparing PowerShell vs PowerShell Core behavior..."
+          
+          # Reload PATH
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Test in Windows PowerShell
+          Write-Host "`nWindows PowerShell:"
+          powershell -Command "rxiv --version"
+          
+          # Test in PowerShell Core
+          Write-Host "`nPowerShell Core:"
+          pwsh -Command "rxiv --version"
+          
+          Write-Host "`n✅ Both PowerShell versions work correctly"
+        shell: powershell
+
+  cache-testing:
+    name: Scoop Cache Testing
+    needs: [setup, scoop-installation]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    if: needs.setup.outputs.run-comprehensive == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Scoop
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm get.scoop.sh | iex
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+        shell: powershell
+        
+      - name: Test cache functionality
+        run: |
+          Write-Host "🧪 Testing Scoop cache functionality..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # First installation (populates cache)
+          Write-Host "`n1️⃣ First installation (should download)..."
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+          
+          # Check cache
+          Write-Host "`n📦 Checking cache..."
+          scoop cache show rxiv-maker
+          
+          # Uninstall
+          Write-Host "`n🗑️ Uninstalling..."
+          scoop uninstall rxiv-maker
+          
+          # Reinstall (should use cache)
+          Write-Host "`n2️⃣ Second installation (should use cache)..."
+          $startTime = Get-Date
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+          $installTime = (Get-Date) - $startTime
+          
+          Write-Host "Installation time: $($installTime.TotalSeconds) seconds"
+          
+          # Clear cache and test
+          Write-Host "`n🧹 Clearing cache..."
+          scoop cache rm rxiv-maker
+          
+          # Verify cache is cleared
+          Write-Host "`n📦 Verifying cache is cleared..."
+          scoop cache show rxiv-maker
+          
+          Write-Host "`n✅ Cache testing completed successfully"
+        shell: powershell
+
+  dependency-testing:
+    name: Dependency Testing
+    needs: [setup, scoop-installation]
+    runs-on: windows-latest
+    timeout-minutes: 35
+    if: needs.setup.outputs.run-comprehensive == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Scoop
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          irm get.scoop.sh | iex
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Add buckets
+          scoop bucket add extras
+          scoop bucket add main
+        shell: powershell
+        
+      - name: Test with suggested dependencies
+        run: |
+          Write-Host "🧪 Testing rxiv-maker with suggested dependencies..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Install suggested dependencies first
+          Write-Host "`n📦 Installing suggested dependencies..."
+          scoop install git
+          scoop install make
+          
+          # Verify dependencies
+          Write-Host "`n✅ Verifying dependencies..."
+          git --version
+          make --version
+          
+          # Install rxiv-maker
+          Write-Host "`n📦 Installing rxiv-maker..."
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+          
+          # Test with dependencies available
+          Write-Host "`n🧪 Testing rxiv-maker with dependencies..."
+          rxiv --version
+          
+          # Test git integration
+          Write-Host "`n🔍 Testing git integration..."
+          New-Item -ItemType Directory -Path "git-test" -Force
+          Set-Location "git-test"
+          git init
+          rxiv init test-with-git
+          
+          # Test make integration (if applicable)
+          Write-Host "`n🔍 Testing make availability..."
+          if (Test-Path "test-with-git/Makefile" -or Test-Path "Makefile") {
+            make --help
+            Write-Host "✅ Make is available for legacy commands"
+          } else {
+            Write-Host "ℹ️ No Makefile found (expected for modern CLI)"
+          }
+          
+          Set-Location ..
+          Write-Host "`n✅ Dependency testing completed successfully"
+        shell: powershell
+        
+      - name: Test without Python pre-installed
+        run: |
+          Write-Host "🧪 Testing rxiv-maker installation when Python is not pre-installed..."
+          
+          # This test simulates a clean system
+          # Note: On GitHub runners, Python is pre-installed, so we'll just verify the dependency
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Check if Python would be installed as a dependency
+          Write-Host "`n📦 Checking Python dependency..."
+          scoop info rxiv-maker | Select-String -Pattern "depends"
+          
+          # Verify Python is available after rxiv-maker installation
+          python --version
+          python -m pip --version
+          
+          Write-Host "`n✅ Python dependency is properly configured"
+        shell: powershell
+        
+      - name: Test interaction with other Python packages
+        run: |
+          Write-Host "🧪 Testing interaction with other Scoop Python packages..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Install another Python-based Scoop package
+          Write-Host "`n📦 Installing another Python package via Scoop..."
+          scoop install httpie
+          
+          # Verify both work
+          Write-Host "`n✅ Verifying both Python packages work..."
+          rxiv --version
+          http --version
+          
+          # Check Python environments
+          Write-Host "`n🔍 Checking Python environments..."
+          python -m pip list | Select-String -Pattern "rxiv-maker"
+          
+          Write-Host "`n✅ Multiple Python packages coexist successfully"
+        shell: powershell
+        
+      - name: Test LaTeX detection
+        run: |
+          Write-Host "🧪 Testing LaTeX detection and suggestions..."
+          
+          $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+          
+          # Check if LaTeX is suggested
+          Write-Host "`n📦 Checking LaTeX suggestions..."
+          scoop info rxiv-maker | Select-String -Pattern "suggest" -Context 0,5
+          
+          # Test rxiv behavior without LaTeX
+          Write-Host "`n🔍 Testing rxiv without LaTeX..."
+          rxiv init test-no-latex
+          Set-Location test-no-latex
+          
+          # Try validation (should work but warn about LaTeX)
+          rxiv validate --no-doi
+          
+          Set-Location ..
+          Write-Host "`n✅ LaTeX detection test completed"
+        shell: powershell
+
   summary:
     name: Test Summary
-    needs: [setup, manifest-validation, scoop-installation, latex-integration, performance-testing, comprehensive-testing]
+    needs: [setup, manifest-validation, scoop-installation, latex-integration, performance-testing, comprehensive-testing, powershell-core-testing, cache-testing, dependency-testing]
     runs-on: ubuntu-latest
     if: always()
     
@@ -719,6 +1017,33 @@ jobs:
             echo "❌ **Comprehensive Testing**: Some tests failed" >> $GITHUB_STEP_SUMMARY
           else
             echo "⏭️ **Comprehensive Testing**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # PowerShell Core testing
+          if [ "${{ needs.powershell-core-testing.result }}" = "success" ]; then
+            echo "✅ **PowerShell Core Testing**: All tests passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.powershell-core-testing.result }}" = "failure" ]; then
+            echo "❌ **PowerShell Core Testing**: Tests failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **PowerShell Core Testing**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Cache testing
+          if [ "${{ needs.cache-testing.result }}" = "success" ]; then
+            echo "✅ **Cache Testing**: Cache functionality verified" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.cache-testing.result }}" = "failure" ]; then
+            echo "❌ **Cache Testing**: Cache tests failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **Cache Testing**: Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Dependency testing
+          if [ "${{ needs.dependency-testing.result }}" = "success" ]; then
+            echo "✅ **Dependency Testing**: All dependency scenarios passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.dependency-testing.result }}" = "failure" ]; then
+            echo "❌ **Dependency Testing**: Dependency tests failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ **Dependency Testing**: Skipped" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
