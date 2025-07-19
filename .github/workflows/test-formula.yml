@@ -280,9 +280,12 @@ jobs:
           # Show Scoop config
           scoop config
           
-          # Add common buckets (for dependencies)
-          scoop bucket add extras
-          scoop bucket add main
+          # Add common buckets (for dependencies) - ignore warnings if already exists
+          scoop bucket add extras 2>&1 | Out-Null
+          scoop bucket add main 2>&1 | Out-Null
+          
+          # Verify buckets were added
+          scoop bucket list
           
           Write-Host "✅ Scoop environment configured"
         shell: powershell
