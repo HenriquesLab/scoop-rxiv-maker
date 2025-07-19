@@ -3,8 +3,8 @@
     "description": "Automated LaTeX article generation with modern CLI and figure creation capabilities",
     "homepage": "https://github.com/henriqueslab/rxiv-maker",
     "license": "MIT",
-    "url": "https://files.pythonhosted.org/packages/06/2e/4dd00a5a5509d6d980f4984e2c8bd5ec0e6b68b74a75f34dbcd90acceec5/rxiv_maker-1.4.5-py3-none-any.whl",
-    "hash": "sha256:ef86ed3ea2513ba3de5b1929181fd81e49cb6bdf27c732160011161ee8c294f0",
+    "url": "https://files.pythonhosted.org/packages/f2/a7/07c8c68c8e44cda429c1aae3ef1520d46402590ea86a5c84800eaac87505/rxiv_maker-1.4.5.tar.gz",
+    "hash": "sha256:f1ccdce643de014ad17b78f9632b4ee72b725000d82315fe59c0f05cc9af2d00",
     "depends": [
         "python"
     ],
@@ -22,7 +22,7 @@
     ],
     "post_install": [
         "Write-Host 'Installing Python package...' -ForegroundColor Green",
-        "python -m pip install --user rxiv-maker==$version",
+        "python -m pip install --force-reinstall \"$dir\\rxiv_maker-$version\"",
         "Write-Host 'rxiv-maker installed successfully!' -ForegroundColor Green",
         "Write-Host '' ",
         "Write-Host 'Quick start:' -ForegroundColor Cyan",

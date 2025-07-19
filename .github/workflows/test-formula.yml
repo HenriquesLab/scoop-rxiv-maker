@@ -310,8 +310,11 @@ jobs:
           # Reload PATH to ensure scoop is available
           $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
           
-          # Install from local manifest
-          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json"
+          # Clear pip cache to ensure fresh installation
+          python -m pip cache purge
+          
+          # Install from local manifest with no cache
+          scoop install "${{ github.workspace }}/bucket/rxiv-maker.json" --no-cache
           
           Write-Host "[OK] rxiv-maker installed successfully"
         shell: powershell
@@ -331,6 +334,12 @@ jobs:
           # Check Scoop list
           scoop list rxiv-maker
           
+          # Check Python module directly
+          python -c "import rxiv_maker; print(f'Module version: {rxiv_maker.__version__}')"
+          
+          # Check pip list
+          python -m pip list | findstr rxiv
+          
           Write-Host "[OK] Installation verification successful"
         shell: powershell
         
@@ -341,6 +350,9 @@ jobs:
           
           # Reload PATH to ensure scoop is available
           $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+          
+          # Wait a moment for installation to settle
+          Start-Sleep -Seconds 3
           
           # Run Python environment tests
           & "${{ github.workspace }}/bin/test-python-env.ps1" -Verbose
