@@ -123,13 +123,22 @@ jobs:
           TARGET_VERSION="${{ steps.check_version.outputs.target_version }}"
           echo "🔍 Verifying target version $TARGET_VERSION exists on PyPI..."
           
-          # Check if version exists on PyPI
-          if curl -f "https://pypi.org/pypi/rxiv-maker/$TARGET_VERSION/json" > /dev/null; then
-            echo "✅ Version $TARGET_VERSION exists on PyPI"
-          else
-            echo "❌ Version $TARGET_VERSION not found on PyPI"
-            exit 1
-          fi
+          # Check if version exists on PyPI with retry mechanism
+          for i in {1..3}; do
+            echo "Checking PyPI, attempt $i/3..."
+            if curl -f "https://pypi.org/pypi/rxiv-maker/$TARGET_VERSION/json" --max-time 15 --retry 2 --retry-delay 3 > /dev/null; then
+              echo "✅ Version $TARGET_VERSION exists on PyPI"
+              break
+            else
+              if [ $i -eq 3 ]; then
+                echo "❌ Version $TARGET_VERSION not found on PyPI after 3 attempts"
+                exit 1
+              else
+                echo "⚠️ PyPI check attempt $i failed, retrying in 5 seconds..."
+                sleep 5
+              fi
+            fi
+          done
           
       - name: Get release information
         if: steps.check_version.outputs.update_needed == 'true'
@@ -257,12 +266,26 @@ jobs:
           python3 -m json.tool bucket/rxiv-maker.json > /dev/null
           echo "✅ JSON syntax is valid"
           
-          # Verify download URL
+          # Verify download URL with retry mechanism
           TARGET_VERSION="${{ needs.check-updates.outputs.target-version }}"
           MANIFEST_URL=$(python3 -c "import json; print(json.load(open('bucket/rxiv-maker.json'))['url'])")
           echo "Testing download URL: $MANIFEST_URL"
-          curl -I -f "$MANIFEST_URL" --max-time 30
-          echo "✅ Download URL is valid"
+          
+          for i in {1..3}; do
+            echo "Testing download URL, attempt $i/3..."
+            if curl -I -f "$MANIFEST_URL" --max-time 30 --retry 2 --retry-delay 5; then
+              echo "✅ Download URL is valid"
+              break
+            else
+              if [ $i -eq 3 ]; then
+                echo "❌ Download URL verification failed after 3 attempts"
+                exit 1
+              else
+                echo "⚠️ Download URL test attempt $i failed, retrying in 10 seconds..."
+                sleep 10
+              fi
+            fi
+          done
           
           # Show differences
           echo "📋 Manifest changes:"
@@ -273,12 +296,26 @@ jobs:
         run: |
           echo "🧪 Testing updated manifest..."
           
-          # Test autoupdate mechanism
+          # Test autoupdate mechanism with retry
           echo "Testing autoupdate URL pattern..."
           TARGET_VERSION="${{ needs.check-updates.outputs.target-version }}"
           AUTOUPDATE_URL="https://files.pythonhosted.org/packages/source/r/rxiv-maker/rxiv_maker-$TARGET_VERSION.tar.gz"
-          curl -I -f "$AUTOUPDATE_URL"
-          echo "✅ Autoupdate URL pattern is valid"
+          
+          for i in {1..3}; do
+            echo "Testing autoupdate URL, attempt $i/3..."
+            if curl -I -f "$AUTOUPDATE_URL" --max-time 30 --retry 2 --retry-delay 5; then
+              echo "✅ Autoupdate URL pattern is valid"
+              break
+            else
+              if [ $i -eq 3 ]; then
+                echo "❌ Autoupdate URL verification failed after 3 attempts"
+                exit 1
+              else
+                echo "⚠️ Autoupdate URL test attempt $i failed, retrying in 10 seconds..."
+                sleep 10
+              fi
+            fi
+          done
           
           # Validate against Scoop schema if available
           echo "ℹ️ Manifest structure validation completed"
