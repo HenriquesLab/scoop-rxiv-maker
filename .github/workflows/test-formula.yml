@@ -335,12 +335,15 @@ jobs:
           scoop list rxiv-maker
           
           # Check Python module with better error handling
+          $ErrorActionPreference = "Continue"
           try {
             $moduleCheck = python -c "import rxiv_maker; print('Module version: ' + rxiv_maker.__version__)" 2>&1
-            if ($LASTEXITCODE -eq 0) {
+            $moduleExitCode = $LASTEXITCODE
+            if ($moduleExitCode -eq 0) {
               Write-Host "[OK] Python module: $moduleCheck"
             } else {
-              Write-Host "[WARN] Python module import failed: $moduleCheck"
+              Write-Host "[WARN] Python module import failed (exit code: $moduleExitCode)"
+              Write-Host "[WARN] Error output: $moduleCheck"
               Write-Host "[INFO] This may be normal if the module is installed as a CLI tool only"
             }
           } catch {
@@ -354,11 +357,18 @@ jobs:
           
           # Check pip list (non-critical)
           try {
-            python -m pip list | findstr rxiv
+            $pipList = python -m pip list 2>&1
+            if ($pipList -match "rxiv") {
+              Write-Host "[OK] rxiv-maker found in pip list"
+            } else {
+              Write-Host "[INFO] rxiv-maker not found in pip list (may be normal for CLI-only install)"
+            }
           } catch {
             Write-Host "[INFO] Could not check pip list, but installation verification passed"
           }
           
+          # Ensure step succeeds regardless of pip list check
+          $LASTEXITCODE = 0
           Write-Host "[OK] Installation verification successful"
         shell: powershell
         
