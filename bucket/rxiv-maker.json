@@ -25,7 +25,7 @@
         "python -m pip install --upgrade --force-reinstall \"rxiv-maker==$version\"",
         "if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to install Python package'; exit 1 }",
         "Write-Host 'Verifying installation...' -ForegroundColor Yellow",
-        "python -c \"import rxiv_maker; print('✓ rxiv-maker ' + rxiv_maker.__version__ + ' installed successfully')\"",
+        "python -c \"import rxiv_maker; print('[OK] rxiv-maker ' + rxiv_maker.__version__ + ' installed successfully')\"",
         "if ($LASTEXITCODE -ne 0) { Write-Error 'Python module verification failed'; exit 1 }",
         "Write-Host '' ",
         "Write-Host 'Quick start:' -ForegroundColor Cyan",
