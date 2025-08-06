@@ -43,11 +43,9 @@
         "python -m pip uninstall -y rxiv-maker"
     ],
     "bin": [
-        [
-            "python",
-            "rxiv",
-            "-m rxiv_maker.cli"
-        ]
+        "python",
+        "rxiv", 
+        "-m rxiv_maker.cli"
     ],
     "env_add_path": [],
     "persist": [],
