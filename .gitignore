@@ -31,6 +31,10 @@ __pycache__/
 *.yml
 *.yaml
 
+# Allow GitHub Actions workflows
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
+
 # Prevent Homebrew files
 Formula/
 *.rb

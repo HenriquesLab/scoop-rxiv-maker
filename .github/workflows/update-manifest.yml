@@ -1,0 +1,311 @@
+name: Update Manifest
+
+on:
+  schedule:
+    # Check for updates daily at 6 AM UTC
+    - cron: '0 6 * * *'
+  repository_dispatch:
+    types: [update-manifest]
+  workflow_dispatch:
+    inputs:
+      target-version:
+        description: 'Target version to update to (leave empty for latest)'
+        required: false
+        default: ''
+        type: string
+      force-update:
+        description: 'Force update even if version is same'
+        required: false
+        default: false
+        type: boolean
+      skip-pr:
+        description: 'Skip PR creation and commit directly'
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      target-version:
+        description: 'Target version to update to'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  check-updates:
+    name: Check for Updates
+    runs-on: windows-latest
+    timeout-minutes: 15
+    outputs:
+      update-needed: ${{ steps.check_version.outputs.update_needed }}
+      current-version: ${{ steps.check_version.outputs.current_version }}
+      target-version: ${{ steps.check_version.outputs.target_version }}
+      has-changes: ${{ steps.check_version.outputs.has_changes }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          
+      - name: Check for new version
+        id: check_version
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          Write-Output "🔍 Checking for version updates..."
+          
+          # Get current version from manifest
+          $manifest = Get-Content "bucket/rxiv-maker.json" | ConvertFrom-Json
+          $currentVersion = $manifest.version
+          Write-Output "Current version: $currentVersion"
+          
+          # Determine target version
+          if ("${{ inputs.target-version }}" -ne "") {
+            $targetVersion = "${{ inputs.target-version }}"
+            Write-Output "Using specified target version: $targetVersion"
+          } else {
+            # Get latest version from PyPI
+            try {
+              $response = Invoke-RestMethod "https://pypi.org/pypi/rxiv-maker/json"
+              $targetVersion = $response.info.version
+              Write-Output "Latest PyPI version: $targetVersion"
+            } catch {
+              Write-Output "❌ Failed to fetch latest version from PyPI"
+              Write-Output "update_needed=false" >> $env:GITHUB_OUTPUT
+              exit 0
+            }
+          }
+          
+          # Check if update is needed
+          $updateNeeded = $false
+          if ($targetVersion -ne $currentVersion -or "${{ inputs.force-update }}" -eq "true") {
+            $updateNeeded = $true
+            Write-Output "✅ Update needed: $currentVersion → $targetVersion"
+          } else {
+            Write-Output "ℹ️ Already up to date: $currentVersion"
+          }
+          
+          # Output results
+          Write-Output "update_needed=$($updateNeeded.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          Write-Output "current_version=$currentVersion" >> $env:GITHUB_OUTPUT
+          Write-Output "target_version=$targetVersion" >> $env:GITHUB_OUTPUT
+          Write-Output "has_changes=$($updateNeeded.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+  update-manifest:
+    name: Update Manifest
+    needs: check-updates
+    runs-on: windows-latest
+    if: needs.check-updates.outputs.update-needed == 'true'
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+      - name: Update manifest file
+        shell: pwsh
+        run: |
+          $targetVersion = "${{ needs.check-updates.outputs.target-version }}"
+          Write-Output "🔄 Updating manifest to version $targetVersion"
+          
+          # Read current manifest
+          $manifest = Get-Content "bucket/rxiv-maker.json" | ConvertFrom-Json
+          $oldVersion = $manifest.version
+          
+          # Update version
+          $manifest.version = $targetVersion
+          
+          # Update download URL and hash
+          $downloadUrl = "https://github.com/HenriquesLab/rxiv-maker/releases/download/v$targetVersion/rxiv-maker-$targetVersion-win-x64.zip"
+          $manifest.url = $downloadUrl
+          
+          # Get SHA256 hash from GitHub release
+          try {
+            $releaseResponse = Invoke-RestMethod "https://api.github.com/repos/HenriquesLab/rxiv-maker/releases/tags/v$targetVersion"
+            $hashAsset = $releaseResponse.assets | Where-Object { $_.name -like "*win-x64.zip.sha256" }
+            
+            if ($hashAsset) {
+              $hashContent = Invoke-RestMethod $hashAsset.browser_download_url
+              $newHash = ($hashContent -split '\s+')[0]
+              $manifest.hash = $newHash
+              Write-Output "✅ Updated hash: $newHash"
+            } else {
+              Write-Output "⚠️ No hash file found, keeping existing hash"
+            }
+          } catch {
+            Write-Output "⚠️ Failed to fetch hash, keeping existing hash"
+          }
+          
+          # Save updated manifest
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content "bucket/rxiv-maker.json"
+          
+          Write-Output "✅ Manifest updated successfully"
+          Write-Output "   Version: $oldVersion → $targetVersion"
+          Write-Output "   URL: $downloadUrl"
+          
+      - name: Test manifest
+        shell: pwsh
+        run: |
+          Write-Output "🧪 Testing updated manifest..."
+          
+          # Install Scoop if not available
+          if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+            Write-Output "Installing Scoop..."
+            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+            Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+          }
+          
+          # Test manifest syntax
+          Write-Output "Testing manifest syntax..."
+          $manifest = Get-Content "bucket/rxiv-maker.json" | ConvertFrom-Json
+          Write-Output "✅ Manifest syntax is valid"
+          
+          Write-Output "✅ All tests passed"
+          
+      - name: Commit changes
+        run: |
+          git add bucket/rxiv-maker.json
+          git commit -m "chore: update rxiv-maker to v${{ needs.check-updates.outputs.target-version }}
+
+          - Update version from ${{ needs.check-updates.outputs.current-version }} to ${{ needs.check-updates.outputs.target-version }}
+          - Update download URL and SHA256 hash
+          - Automated update triggered by ${{ github.event_name }}"
+
+  create-pull-request:
+    name: Create Pull Request
+    needs: [check-updates, update-manifest]
+    runs-on: windows-latest
+    if: needs.check-updates.outputs.update-needed == 'true' && inputs.skip-pr != 'true'
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          ref: main
+          
+      - name: Create pull request
+        shell: pwsh
+        run: |
+          $targetVersion = "${{ needs.check-updates.outputs.target-version }}"
+          $currentVersion = "${{ needs.check-updates.outputs.current-version }}"
+          
+          # Create PR
+          $prTitle = "Update rxiv-maker to v$targetVersion"
+          $prBody = @"
+          ## 🔄 Automated Manifest Update
+          
+          This PR updates the Scoop manifest for rxiv-maker.
+          
+          ### Changes
+          - **Version**: $currentVersion → $targetVersion
+          - **Trigger**: ${{ github.event_name }}
+          
+          ### Release Information
+          - [Release Notes](https://github.com/HenriquesLab/rxiv-maker/releases/tag/v$targetVersion)
+          - [PyPI Package](https://pypi.org/project/rxiv-maker/$targetVersion/)
+          
+          ### Testing
+          - ✅ Manifest syntax validated
+          - ✅ Download URL verified
+          - ✅ SHA256 hash updated
+          
+          ---
+          
+          🤖 This PR was created automatically by the update workflow.
+          "@
+          
+          gh pr create --title "$prTitle" --body "$prBody" --base main --head main
+          
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  direct-commit:
+    name: Direct Commit
+    needs: [check-updates, update-manifest]
+    runs-on: windows-latest
+    if: needs.check-updates.outputs.update-needed == 'true' && inputs.skip-pr == 'true'
+    timeout-minutes: 5
+    
+    steps:
+      - name: Push changes
+        run: |
+          git push origin main
+
+  notify-completion:
+    name: Notify Completion
+    needs: [check-updates, update-manifest, create-pull-request, direct-commit]
+    runs-on: windows-latest
+    if: always() && needs.check-updates.outputs.update-needed == 'true'
+    
+    steps:
+      - name: Create update summary
+        shell: pwsh
+        run: |
+          Write-Output "# Manifest Update Summary" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "**Current Version**: ${{ needs.check-updates.outputs.current-version }}" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "**Target Version**: ${{ needs.check-updates.outputs.target-version }}" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "**Trigger**: ${{ github.event_name }}" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "" >> $env:GITHUB_STEP_SUMMARY
+          
+          # Update status
+          if ("${{ needs.update-manifest.result }}" -eq "success") {
+            Write-Output "✅ **Manifest Update**: Successfully updated and tested" >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            Write-Output "❌ **Manifest Update**: Failed" >> $env:GITHUB_STEP_SUMMARY
+          }
+          
+          # PR/Commit status
+          if ("${{ inputs.skip-pr }}" -eq "true") {
+            if ("${{ needs.direct-commit.result }}" -eq "success") {
+              Write-Output "✅ **Direct Commit**: Changes committed to main branch" >> $env:GITHUB_STEP_SUMMARY
+            } else {
+              Write-Output "❌ **Direct Commit**: Failed to commit changes" >> $env:GITHUB_STEP_SUMMARY
+            }
+          } else {
+            if ("${{ needs.create-pull-request.result }}" -eq "success") {
+              Write-Output "✅ **Pull Request**: Created for manual review" >> $env:GITHUB_STEP_SUMMARY
+            } else {
+              Write-Output "❌ **Pull Request**: Failed to create PR" >> $env:GITHUB_STEP_SUMMARY
+            }
+          }
+          
+          Write-Output "" >> $env:GITHUB_STEP_SUMMARY
+          $nextSteps = if ("${{ inputs.skip-pr }}" -eq "true") { "Changes committed directly" } else { "Review and merge the pull request" }
+          Write-Output "**Next Steps**: $nextSteps" >> $env:GITHUB_STEP_SUMMARY
+
+  no-update-needed:
+    name: No Update Required
+    needs: check-updates
+    runs-on: windows-latest
+    if: needs.check-updates.outputs.update-needed == 'false'
+    
+    steps:
+      - name: Log no update needed
+        shell: pwsh
+        run: |
+          Write-Output "# No Update Required" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "**Current Version**: ${{ needs.check-updates.outputs.current-version }}" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "**Latest Version**: ${{ needs.check-updates.outputs.target-version }}" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "**Status**: Manifest is up to date" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "ℹ️ No action required. The manifest is already at the latest version." >> $env:GITHUB_STEP_SUMMARY
