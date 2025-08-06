@@ -15,3 +15,37 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Repository contamination prevention
+# This is a Scoop bucket - prevent main rxiv-maker project files
+pyproject.toml
+Makefile
+src/
+tests/
+*.py
+requirements*.txt
+setup.py
+setup.cfg
+*.egg-info/
+__pycache__/
+*.yml
+*.yaml
+
+# Prevent Homebrew files
+Formula/
+*.rb
+brew-*
+
+# Prevent VSCode extension files
+package.json
+*.ts
+*.js
+*.mjs
+syntaxes/
+schemas/
+language-configuration.json
+*.tmLanguage.json
+.vscodeignore
+esbuild.js
+eslint.config.mjs
+tsconfig.json
