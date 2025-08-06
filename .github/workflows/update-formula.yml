@@ -4,6 +4,8 @@ on:
   schedule:
     # Check for updates daily at 6 AM UTC
     - cron: '0 6 * * *'
+  repository_dispatch:
+    types: [update-manifest]
   workflow_dispatch:
     inputs:
       target-version:
